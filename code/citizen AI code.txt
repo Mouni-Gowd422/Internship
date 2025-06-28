@@ -1,0 +1,94 @@
+!pip install gradio transformers torch --quiet
+import gradio as gr
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+
+# 🔄 Load Granite model
+model_name = "ibm-granite/granite-3.3-2b-instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    trust_remote_code=True
+)
+
+# ✅ Optimized pipeline (faster)
+chat_pipeline = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    max_length=512,  # 🔽 Reduced for speed
+    temperature=0.7,
+    do_sample=True,
+    pad_token_id=tokenizer.eos_token_id
+)
+
+# Sentiment model (fast + small)
+sentiment_model = pipeline("sentiment-analysis")
+
+# Global memory
+chat_history = []
+feedback_list = []
+concerns = []
+
+# 💬 Smart Chat
+def handle_chat(user_input):
+    prompt = f"You are a helpful AI assistant for Indian public services. Answer clearly:\n\n{user_input}\n\nAnswer:"
+    response = chat_pipeline(prompt)
+    answer = response[0]['generated_text'].split("Answer:")[-1].strip()
+    chat_history.append((user_input, answer))
+    trimmed = chat_history[-5:]  # Limit to last 5 Q&A
+    return "\n\n".join([f"👤 {q}\n🤖 {a}" for q, a in trimmed])
+
+# 📢 Feedback
+def handle_feedback(text):
+    sentiment = sentiment_model(text)[0]["label"]
+    feedback_list.append((text, sentiment))
+    return f"✅ Feedback received. Sentiment: {sentiment}"
+
+# ❗ Concern
+def handle_concern(text):
+    concerns.append(text)
+    return "📬 Concern submitted successfully."
+
+# 📊 Dashboard
+def dashboard_summary():
+    pos = sum(1 for _, s in feedback_list if s == "POSITIVE")
+    neg = sum(1 for _, s in feedback_list if s == "NEGATIVE")
+    dash = f"🟢 Positive Feedbacks: {pos}\n🔴 Negative Feedbacks: {neg}\n\n📌 Concerns:"
+    dash += "\n" + "\n".join([f"• {c}" for c in concerns]) if concerns else "\nNo concerns submitted yet."
+    return dash
+
+# 🎛 Gradio UI
+with gr.Blocks(title="Citizen AI - Fast Granite Edition") as app:
+    gr.HTML("<h2 style='text-align:center;'>🇮🇳 Citizen AI</h2><p style='text-align:center;'>Granite-powered Assistant (Fast Mode)</p>")
+
+    with gr.Tabs():
+        with gr.Tab("💬 Ask AI"):
+            user_input = gr.Textbox(label="Ask your question")
+            ask_btn = gr.Button("Ask AI")
+            chat_output = gr.Textbox(label="Chat History", lines=10)
+            ask_btn.click(fn=handle_chat, inputs=user_input, outputs=chat_output)
+
+        with gr.Tab("📢 Feedback"):
+            feedback_input = gr.Textbox(label="Write your feedback")
+            feedback_btn = gr.Button("Submit Feedback")
+            feedback_output = gr.Textbox(label="Status")
+            feedback_btn.click(fn=handle_feedback, inputs=feedback_input, outputs=feedback_output)
+
+        with gr.Tab("❗ Raise Concern"):
+            concern_input = gr.Textbox(label="Describe your concern")
+            concern_btn = gr.Button("Submit Concern")
+            concern_output = gr.Textbox(label="Status")
+            concern_btn.click(fn=handle_concern, inputs=concern_input, outputs=concern_output)
+
+        with gr.Tab("📊 Dashboard"):
+            dash_btn = gr.Button("Refresh Dashboard")
+            dash_output = gr.Textbox(label="Summary", lines=12)
+            dash_btn.click(fn=dashboard_summary, outputs=dash_output)
+
+    gr.HTML("<p style='text-align:center;'>⚡ Optimized for faster response | Powered by IBM Granite + Hugging Face</p>")
+
+# 🚀 Launch the app
+app.launch(share=True)
